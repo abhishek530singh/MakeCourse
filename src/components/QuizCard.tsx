@@ -136,7 +136,7 @@ export function QuizCard({ questions, onReplayMoment, onQuizCompleted }: QuizCar
                     } else if (isThisSelected && !isThisCorrectAnswer) {
                       optionStyle = "border-rose-400 bg-rose-100/70 dark:bg-rose-900/40 text-rose-900 dark:text-rose-100";
                     } else {
-                      optionStyle = "opacity-60 border-zinc-200 dark:border-zinc-800 text-zinc-500";
+                      optionStyle = "opacity-75 border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400";
                     }
                   }
 
