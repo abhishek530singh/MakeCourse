@@ -52,6 +52,14 @@ export default function HomePage() {
     }
     loaded.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     setSavedCourses(loaded);
+
+    const syncKey = () => {
+      const storedKey = localStorage.getItem("makecourse_gemini_key") || "";
+      if (storedKey) setApiKey(storedKey);
+    };
+    syncKey();
+    window.addEventListener("makecourse_key_updated", syncKey);
+    return () => window.removeEventListener("makecourse_key_updated", syncKey);
   }, []);
 
   const saveCourseSafely = (course: Course) => {

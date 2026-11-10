@@ -7,11 +7,10 @@
   --foreground: #09090b;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #09090b;
-    --foreground: #f4f4f5;
-  }
+html.dark {
+  --background: #09090b;
+  --foreground: #f4f4f5;
+  color-scheme: dark;
 }
 
 body {
@@ -39,4 +38,3 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(150, 150, 150, 0.4);
 }
-
