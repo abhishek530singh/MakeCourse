@@ -78,3 +78,4 @@ export function LessonNotes({ notes, keyTakeaways, lessonTitle }: LessonNotesPro
     </div>
   );
 }
+

@@ -45,3 +45,4 @@ export function formatDurationHuman(seconds: number): string {
   }
   return `${minutes} min`;
 }
+

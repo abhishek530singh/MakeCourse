@@ -206,3 +206,4 @@ export function QuizCard({ questions, onReplayMoment, onQuizCompleted }: QuizCar
     </div>
   );
 }
+

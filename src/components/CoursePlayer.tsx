@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Play, Pause, RotateCcw, Volume2, Maximize2, AlertCircle } from "lucide-react";
+import { RotateCcw, RotateCw, AlertCircle, PlayCircle, ArrowRight } from "lucide-react";
 import { formatSecondsToTime } from "@/lib/youtube";
 
 interface CoursePlayerProps {
@@ -10,6 +10,8 @@ interface CoursePlayerProps {
   endSeconds?: number;
   lessonTitle: string;
   onTimeUpdate?: (seconds: number) => void;
+  onNextLecture?: () => void;
+  hasNextLecture?: boolean;
   playerRef?: React.MutableRefObject<{ seekTo: (seconds: number) => void } | null>;
 }
 
@@ -26,18 +28,21 @@ export function CoursePlayer({
   endSeconds,
   lessonTitle,
   onTimeUpdate,
+  onNextLecture,
+  hasNextLecture,
   playerRef
 }: CoursePlayerProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const ytPlayerRef = useRef<any>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(startSeconds);
   const [isReady, setIsReady] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const lastVideoIdRef = useRef<string>(videoId);
 
-  // Initialize YT player
+  // Initialize YT player whenever videoId changes
   useEffect(() => {
     let interval: NodeJS.Timeout;
+    setIsReady(false);
+    lastVideoIdRef.current = videoId;
 
     const setupPlayer = () => {
       if (!window.YT || !window.YT.Player) return;
@@ -45,7 +50,7 @@ export function CoursePlayer({
       if (ytPlayerRef.current) {
         try {
           ytPlayerRef.current.destroy();
-        } catch (e) {
+        } catch {
           // ignore
         }
       }
@@ -58,7 +63,6 @@ export function CoursePlayer({
           rel: 0,
           modestbranding: 1,
           start: Math.floor(startSeconds),
-          end: endSeconds ? Math.floor(endSeconds) : undefined,
           enablejsapi: 1,
           origin: typeof window !== "undefined" ? window.location.origin : undefined
         },
@@ -68,13 +72,6 @@ export function CoursePlayer({
             setHasError(false);
             event.target.seekTo(startSeconds, true);
           },
-          onStateChange: (event: any) => {
-            if (event.data === window.YT.PlayerState.PLAYING) {
-              setIsPlaying(true);
-            } else if (event.data === window.YT.PlayerState.PAUSED || event.data === window.YT.PlayerState.ENDED) {
-              setIsPlaying(false);
-            }
-          },
           onError: () => {
             setHasError(true);
           }
@@ -82,59 +79,67 @@ export function CoursePlayer({
       });
     };
 
-    if (!window.YT) {
-      const tag = document.createElement("script");
-      tag.src = "https://www.youtube.com/iframe_api";
-      const firstScriptTag = document.getElementsByTagName("script")[0];
-      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    if (!window.YT || !window.YT.Player) {
+      const existingScript = document.querySelector('script[src="https://www.youtube.com/iframe_api"]');
+      if (!existingScript) {
+        const tag = document.createElement("script");
+        tag.src = "https://www.youtube.com/iframe_api";
+        document.head.appendChild(tag);
+      }
       window.onYouTubeIframeAPIReady = setupPlayer;
     } else {
       setupPlayer();
     }
 
-    // Time ticker
     interval = setInterval(() => {
       if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === "function") {
         try {
           const time = ytPlayerRef.current.getCurrentTime();
           if (time !== undefined && !isNaN(time)) {
-            setCurrentTime(Math.floor(time));
-            onTimeUpdate?.(Math.floor(time));
+            const floored = Math.floor(time);
+            setCurrentTime(floored);
+            onTimeUpdate?.(floored);
           }
-        } catch (e) {
+        } catch {
           // ignore
         }
       }
-    }, 1000);
+    }, 800);
 
     return () => {
       clearInterval(interval);
       if (ytPlayerRef.current) {
         try {
           ytPlayerRef.current.destroy();
-        } catch (e) {
+        } catch {
           // ignore
         }
       }
     };
   }, [videoId]);
 
-  // When startSeconds changes (lesson navigation)
+  // Seek when switching lectures within the same compilation video
   useEffect(() => {
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === "function" && isReady) {
+    if (
+      lastVideoIdRef.current === videoId &&
+      ytPlayerRef.current &&
+      typeof ytPlayerRef.current.seekTo === "function" &&
+      isReady
+    ) {
       ytPlayerRef.current.seekTo(startSeconds, true);
+      ytPlayerRef.current.playVideo?.();
       setCurrentTime(startSeconds);
     }
-  }, [startSeconds, isReady]);
+  }, [startSeconds, lessonTitle, isReady, videoId]);
 
-  // Expose seekTo method to parent via playerRef
+  // Expose seekTo method via playerRef
   useEffect(() => {
     if (playerRef) {
       playerRef.current = {
         seekTo: (seconds: number) => {
           if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === "function") {
             ytPlayerRef.current.seekTo(seconds, true);
-            ytPlayerRef.current.playVideo();
+            ytPlayerRef.current.playVideo?.();
             setCurrentTime(seconds);
           }
         }
@@ -145,13 +150,15 @@ export function CoursePlayer({
   const handleSeek = (seconds: number) => {
     if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === "function") {
       ytPlayerRef.current.seekTo(seconds, true);
+      ytPlayerRef.current.playVideo?.();
       setCurrentTime(seconds);
     }
   };
 
-  const handleRewind10 = () => {
-    handleSeek(Math.max(startSeconds, currentTime - 10));
-  };
+  const segmentDuration = Math.max(1, (endSeconds ?? startSeconds + 60) - startSeconds);
+  const lectureElapsed = Math.max(0, Math.min(segmentDuration, currentTime - startSeconds));
+  const lectureProgress = Math.min(100, Math.round((lectureElapsed / segmentDuration) * 100));
+  const reachedLectureEnd = Boolean(endSeconds && currentTime >= endSeconds - 2 && hasNextLecture);
 
   return (
     <div className="flex flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-black shadow-lg dark:border-zinc-800">
@@ -164,7 +171,7 @@ export function CoursePlayer({
             <AlertCircle className="mb-2 h-10 w-10 text-amber-500" />
             <h4 className="text-base font-semibold">Video Playback Notice</h4>
             <p className="mt-1 max-w-md text-xs text-zinc-400">
-              This video requires opening directly on YouTube or embeds are restricted by the creator. You can continue studying the AI notes and interactive quizzes.
+              This video requires opening directly on YouTube or embeds are restricted by the creator. You can continue studying the AI notes, transcript, and quizzes below.
             </p>
             <a
               href={`https://www.youtube.com/watch?v=${videoId}&t=${startSeconds}s`}
@@ -178,11 +185,19 @@ export function CoursePlayer({
         )}
       </div>
 
+      {/* Lecture Window Progress Indicator */}
+      <div className="h-1 w-full bg-zinc-800">
+        <div
+          className="h-full bg-gradient-to-r from-brand-500 to-emerald-400 transition-all duration-300"
+          style={{ width: `${lectureProgress}%` }}
+        />
+      </div>
+
       {/* Synchronized Player Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-white">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-900 px-4 py-2.5 text-white">
+        <div className="flex items-center gap-2">
           <button
-            onClick={handleRewind10}
+            onClick={() => handleSeek(Math.max(startSeconds, currentTime - 10))}
             className="flex items-center gap-1 rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
             title="Rewind 10 seconds"
           >
@@ -190,22 +205,49 @@ export function CoursePlayer({
             <span>-10s</span>
           </button>
 
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs font-medium text-emerald-400">
+          <button
+            onClick={() => handleSeek(currentTime + 10)}
+            className="flex items-center gap-1 rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
+            title="Forward 10 seconds"
+          >
+            <span>+10s</span>
+            <RotateCw className="h-3.5 w-3.5" />
+          </button>
+
+          <button
+            onClick={() => handleSeek(startSeconds)}
+            className="hidden items-center gap-1 rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white sm:flex"
+            title="Jump to start of current lecture"
+          >
+            <PlayCircle className="h-3.5 w-3.5 text-brand-400" />
+            <span>Lecture Start</span>
+          </button>
+
+          <div className="ml-1 flex items-center gap-1.5 font-mono text-xs">
+            <span className="font-semibold text-emerald-400">
               {formatSecondsToTime(currentTime)}
             </span>
-            <span className="text-xs text-zinc-500">/</span>
-            <span className="font-mono text-xs text-zinc-400">
+            <span className="text-zinc-500">/</span>
+            <span className="text-zinc-400">
               {endSeconds ? formatSecondsToTime(endSeconds) : "End"}
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-zinc-400">
-          <span className="hidden sm:inline">Now Playing:</span>
-          <span className="max-w-[220px] truncate font-medium text-zinc-200 sm:max-w-xs">
-            {lessonTitle}
-          </span>
+        <div className="flex items-center gap-2">
+          {reachedLectureEnd && onNextLecture ? (
+            <button
+              onClick={onNextLecture}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500"
+            >
+              <span>Next Lecture</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <span className="max-w-[240px] truncate text-xs font-medium text-zinc-300 sm:max-w-sm">
+              {lessonTitle}
+            </span>
+          )}
         </div>
       </div>
     </div>

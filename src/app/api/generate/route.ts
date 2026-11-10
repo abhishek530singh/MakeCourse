@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractYouTubeVideoId } from "@/lib/youtube";
+import { extractYouTubePlaylistId, extractYouTubeVideoId } from "@/lib/youtube";
 import { generateCourseWithAI } from "@/lib/gemini";
 import { DEMO_COURSES } from "@/lib/demoCourses";
+
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,25 +18,29 @@ export async function POST(req: NextRequest) {
     }
 
     const videoId = extractYouTubeVideoId(url);
-    if (!videoId) {
+    const playlistId = extractYouTubePlaylistId(url);
+
+    if (!videoId && !playlistId) {
       return NextResponse.json(
-        { error: "Could not extract a valid YouTube video ID from the provided link." },
+        { error: "Could not extract a valid YouTube video or playlist ID from the provided link." },
         { status: 400 }
       );
     }
 
     // Check if it matches any demo course directly
-    const matchedDemo = DEMO_COURSES.find(
-      (c) => c.originalVideoId === videoId || c.sourceUrl.includes(videoId)
-    );
-
-    if (matchedDemo) {
-      return NextResponse.json({ course: matchedDemo });
+    if (videoId) {
+      const matchedDemo = DEMO_COURSES.find(
+        (c) => c.originalVideoId === videoId || c.sourceUrl.includes(videoId)
+      );
+      if (matchedDemo) {
+        return NextResponse.json({ course: matchedDemo });
+      }
     }
 
-    // Generate with AI / smart synthesizer
+    // Generate complete course breakdown from real metadata + transcript + chapters/playlist
     const course = await generateCourseWithAI({
       videoId,
+      playlistId,
       url,
       dailyCommitmentMinutes: Number(dailyCommitmentMinutes) || 45,
       level: level || "Beginner",

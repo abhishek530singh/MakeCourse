@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   Sparkles,
   Youtube,
@@ -13,12 +12,14 @@ import {
   FastForward,
   BookOpen,
   Award,
-  CheckCircle,
   Play,
   Key,
-  Flame
+  Flame,
+  History,
+  Trash2
 } from "lucide-react";
 import { DEMO_COURSES } from "@/lib/demoCourses";
+import { Course } from "@/lib/types";
 import { formatDurationHuman } from "@/lib/youtube";
 
 export default function HomePage() {
@@ -30,6 +31,61 @@ export default function HomePage() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savedCourses, setSavedCourses] = useState<Course[]>([]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const loaded: Course[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("course_")) {
+        try {
+          const parsed = JSON.parse(localStorage.getItem(k) || "");
+          if (parsed && parsed.id && parsed.modules) {
+            loaded.push(parsed);
+          }
+        } catch {
+          // ignore malformed entries
+        }
+      }
+    }
+    loaded.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    setSavedCourses(loaded);
+  }, []);
+
+  const saveCourseSafely = (course: Course) => {
+    if (typeof window === "undefined") return;
+    const key = `course_${course.id}`;
+    try {
+      localStorage.setItem(key, JSON.stringify(course));
+    } catch {
+      // Fallback: strip bulky transcript cues if localStorage quota is tight
+      const compactCourse: Course = {
+        ...course,
+        modules: course.modules.map((m) => ({
+          ...m,
+          lessons: m.lessons.map((l) => ({
+            ...l,
+            transcriptCues: l.transcriptCues?.slice(0, 8)
+          }))
+        }))
+      };
+      try {
+        localStorage.setItem(key, JSON.stringify(compactCourse));
+      } catch (err) {
+        console.warn("Could not persist course to localStorage:", err);
+      }
+    }
+  };
+
+  const handleDeleteSaved = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(`course_${id}`);
+      localStorage.removeItem(`progress_${id}`);
+    }
+    setSavedCourses((prev) => prev.filter((c) => c.id !== id));
+  };
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,11 +114,7 @@ export default function HomePage() {
         throw new Error(data.error || "Failed to generate course.");
       }
 
-      // Save course in localStorage so it can be viewed on /course/[id]
-      if (typeof window !== "undefined") {
-        localStorage.setItem(`course_${data.course.id}`, JSON.stringify(data.course));
-      }
-
+      saveCourseSafely(data.course);
       router.push(`/course/${data.course.id}`);
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred while generating the course.");
@@ -97,14 +149,13 @@ export default function HomePage() {
           </h1>
 
           <p className="mt-5 text-base leading-relaxed text-zinc-600 dark:text-zinc-400 sm:text-lg">
-            Say goodbye to tutorial fatigue and recommendation rabbit holes. MakeCourse splits long playlists into structured daily lessons, creates diagnostic placement tests, and generates quizzes with timestamped <span className="font-semibold text-brand-600 dark:text-brand-400">"Replay the Moment"</span> video jumps.
+            Say goodbye to tutorial fatigue and recommendation rabbit holes. MakeCourse breaks down even 15-hour marathon videos and playlists into Udemy-style sections, interactive transcripts, placement tests, and quizzes with <span className="font-semibold text-brand-600 dark:text-brand-400">"Replay the Moment"</span> video jumps.
           </p>
         </div>
 
         {/* Generator Form Card */}
         <div className="mx-auto mt-12 max-w-2xl rounded-3xl border border-zinc-200/90 bg-white/95 p-6 shadow-xl shadow-zinc-200/50 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/90 dark:shadow-none sm:p-8">
           <form onSubmit={handleGenerate} className="space-y-6">
-            {/* YouTube URL input */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
                 YouTube Video or Playlist URL
@@ -117,7 +168,7 @@ export default function HomePage() {
                   type="text"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
-                  placeholder="e.g. https://www.youtube.com/watch?v=nu_pCVPKzTk or playlist URL"
+                  placeholder="e.g. https://www.youtube.com/watch?v=KN58GwRRu28 or playlist URL"
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 py-3.5 pl-11 pr-4 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-brand-500 focus:bg-white focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-white dark:focus:border-brand-400 dark:focus:bg-zinc-950"
                 />
               </div>
@@ -185,11 +236,11 @@ export default function HomePage() {
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="AIzaSy... (leave blank to use built-in synthesizer)"
+                    placeholder="AIzaSy... (leave blank to use built-in transcript & chapter engine)"
                     className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 px-3.5 py-2 text-xs text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-brand-500 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-white"
                   />
                   <p className="mt-1 text-[11px] text-zinc-400">
-                    Optional: Provide your own Google Gemini API key for bespoke customized lessons, or leave blank to use the instant heuristic engine.
+                    Optional: Provide your own Google Gemini API key to enrich every section with custom AI notes and quizzes.
                   </p>
                 </div>
               )}
@@ -214,7 +265,7 @@ export default function HomePage() {
               {isLoading ? (
                 <>
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  <span>Synthesizing Modules, Transcripts & Quizzes...</span>
+                  <span>Fetching Full Transcript & Building Udemy Breakdown...</span>
                 </>
               ) : (
                 <>
@@ -226,6 +277,72 @@ export default function HomePage() {
             </button>
           </form>
         </div>
+
+        {/* User's Saved / Generated Courses */}
+        {savedCourses.length > 0 && (
+          <div className="mx-auto mt-16 max-w-5xl">
+            <div className="flex items-center justify-between border-b border-zinc-200 pb-4 dark:border-zinc-800">
+              <div>
+                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                  <History className="h-4 w-4" />
+                  <span className="text-xs font-bold uppercase tracking-wider">Your Library</span>
+                </div>
+                <h2 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">
+                  Recently Generated Courses
+                </h2>
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
+              {savedCourses.map((course) => {
+                const totalLectures = course.modules.reduce((acc, m) => acc + m.lessons.length, 0);
+                return (
+                  <div
+                    key={course.id}
+                    onClick={() => router.push(`/course/${course.id}`)}
+                    className="group relative cursor-pointer overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-sm transition-all hover:-translate-y-1 hover:border-brand-300 hover:shadow-xl dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-brand-700"
+                  >
+                    <button
+                      onClick={(e) => handleDeleteSaved(e, course.id)}
+                      title="Remove from library"
+                      className="absolute right-3 top-3 z-10 rounded-lg bg-black/60 p-1.5 text-white opacity-0 transition-opacity hover:bg-rose-600 group-hover:opacity-100"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+
+                    <div className="aspect-[16/9] w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800">
+                      <img
+                        src={course.thumbnail}
+                        alt={course.title}
+                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                    </div>
+
+                    <div className="p-5">
+                      <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+                        <span className="font-semibold text-brand-600 dark:text-brand-400">
+                          {course.author}
+                        </span>
+                        <span>{formatDurationHuman(course.totalDurationSeconds)}</span>
+                      </div>
+                      <h3 className="mt-1.5 line-clamp-2 text-sm font-bold text-zinc-900 group-hover:text-brand-600 dark:text-white dark:group-hover:text-brand-400">
+                        {course.title}
+                      </h3>
+                      <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-3 text-xs dark:border-zinc-800">
+                        <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                          {course.modules.length} Sections • {totalLectures} Lectures
+                        </span>
+                        <span className="flex items-center gap-1 font-semibold text-brand-600 dark:text-brand-400">
+                          Resume <ArrowRight className="h-3.5 w-3.5" />
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Demo Courses Section */}
         <div className="mx-auto mt-20 max-w-5xl">
@@ -277,7 +394,7 @@ export default function HomePage() {
 
                   <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3 text-xs dark:border-zinc-800">
                     <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                      {course.modules.length} Modules • {course.schedule.length} Days
+                      {course.modules.length} Sections • {course.schedule.length} Days
                     </span>
                     <span className="flex items-center gap-1 font-semibold text-brand-600 dark:text-brand-400">
                       Start Course <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
@@ -330,10 +447,10 @@ export default function HomePage() {
                 <BookOpen className="h-5 w-5" />
               </div>
               <h3 className="mt-4 text-base font-bold text-zinc-900 dark:text-white">
-                Synchronized AI Study Notes
+                Synchronized Transcript & Notes
               </h3>
               <p className="mt-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-                Never scramble to write down notes. Each lesson includes AI-extracted key takeaways, code blocks, and formatted conceptual summaries.
+                Follow along with live-synced clickable transcripts, AI-extracted study notes, and personal timestamped notes.
               </p>
             </div>
 
@@ -342,10 +459,10 @@ export default function HomePage() {
                 <Clock className="h-5 w-5" />
               </div>
               <h3 className="mt-4 text-base font-bold text-zinc-900 dark:text-white">
-                Personalized Daily Pacing
+                Full Udemy-Style Curriculum
               </h3>
               <p className="mt-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-                Tell the planner whether you have 15 or 60 minutes a day. The algorithm calculates your exact completion timeline and distributes content into Day 1, Day 2, etc.
+                Handles 15-hour+ mega-tutorials and playlists seamlessly, breaking 100% of the runtime into structured sections and bite-sized lectures.
               </p>
             </div>
 

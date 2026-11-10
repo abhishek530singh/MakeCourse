@@ -1,332 +1,208 @@
-import { Course, Module, Lesson, QuizQuestion, PlacementQuestion, DailySchedule } from "./types";
-import { formatSecondsToTime } from "./youtube";
+import { Course, Module } from "./types";
+import {
+  fetchPlaylistMetadata,
+  fetchYouTubeMetadataAndTranscript
+} from "./transcript";
+import {
+  assembleCompleteCourse,
+  buildRawSegmentsForVideo,
+  buildRawSegmentsFromPlaylist
+} from "./curriculumBuilder";
+import { extractYouTubePlaylistId, extractYouTubeVideoId, formatSecondsToTime } from "./youtube";
 
 interface GenerateCourseParams {
-  videoId: string;
+  videoId?: string | null;
+  playlistId?: string | null;
   url: string;
-  title?: string;
   dailyCommitmentMinutes: number;
   level: "Beginner" | "Intermediate" | "Advanced";
   apiKey?: string;
 }
 
 export async function generateCourseWithAI(params: GenerateCourseParams): Promise<Course> {
-  const { videoId, url, dailyCommitmentMinutes, level, apiKey } = params;
+  const { url, dailyCommitmentMinutes, level, apiKey } = params;
   const key = apiKey || process.env.GEMINI_API_KEY;
 
+  const videoId = params.videoId || extractYouTubeVideoId(url);
+  const playlistId = params.playlistId || extractYouTubePlaylistId(url);
+
+  let baseCourse: Course;
+
+  // Case 1: Pure playlist URL (no specific videoId, or explicit playlist link without v=)
+  if (!videoId && playlistId) {
+    const playlist = await fetchPlaylistMetadata(playlistId);
+    if (!playlist || playlist.videos.length === 0) {
+      throw new Error("Could not extract videos from this YouTube playlist. Ensure the playlist is public.");
+    }
+
+    const firstVid = playlist.videos[0].videoId;
+    const firstMeta = await fetchYouTubeMetadataAndTranscript(firstVid);
+    const { segments, breakdownSource } = buildRawSegmentsFromPlaylist(playlist);
+
+    baseCourse = assembleCompleteCourse({
+      meta: {
+        ...firstMeta,
+        title: playlist.title || firstMeta.title,
+        author: playlist.author || firstMeta.author,
+        durationSeconds: playlist.videos.reduce((a, b) => a + b.durationSeconds, 0)
+      },
+      segments,
+      breakdownSource,
+      dailyCommitmentMinutes,
+      level,
+      sourceUrl: url
+    });
+  } else if (videoId) {
+    // Case 2: Single Video (including 10-20+ hour mega courses like KN58GwRRu28!)
+    const meta = await fetchYouTubeMetadataAndTranscript(videoId);
+    const linkedPlaylist = meta.linkedPlaylistId
+      ? await fetchPlaylistMetadata(meta.linkedPlaylistId)
+      : null;
+
+    const { segments, breakdownSource } = buildRawSegmentsForVideo(
+      meta,
+      linkedPlaylist,
+      dailyCommitmentMinutes
+    );
+
+    baseCourse = assembleCompleteCourse({
+      meta,
+      segments,
+      breakdownSource,
+      dailyCommitmentMinutes,
+      level,
+      sourceUrl: url
+    });
+  } else {
+    throw new Error("Invalid YouTube video or playlist URL.");
+  }
+
+  // Optional Gemini AI Enrichment: refine modules/notes/quizzes in bounded batches so 15h+ courses never truncate!
   if (key) {
     try {
-      return await generateViaGeminiApi(params, key);
+      return await enrichCourseWithGemini(baseCourse, key);
     } catch (err) {
-      console.warn("Gemini API call failed or timed out, falling back to smart synthesizer:", err);
+      console.warn("Gemini enrichment failed, using transcript-grounded course:", err);
     }
   }
 
-  // Smart heuristic & transcript-aware fallback generator
-  return generateIntelligentFallback(params);
+  return baseCourse;
 }
 
-async function generateViaGeminiApi(params: GenerateCourseParams, apiKey: string): Promise<Course> {
-  const { videoId, url, dailyCommitmentMinutes, level } = params;
+async function enrichCourseWithGemini(course: Course, apiKey: string): Promise<Course> {
+  // Enrich each module (section) in parallel so we never exceed Gemini's output token limit on 16-hour courses
+  const enrichedModules: Module[] = await Promise.all(
+    course.modules.map(async (mod) => {
+      try {
+        const lessonSummaries = mod.lessons.map((l) => ({
+          id: l.id,
+          title: l.title,
+          startSeconds: l.startSeconds,
+          endSeconds: l.endSeconds,
+          transcriptExcerpt: (l.transcriptCues || [])
+            .slice(0, 6)
+            .map((c) => `[${formatSecondsToTime(c.startSeconds)}] ${c.text}`)
+            .join(" ")
+            .slice(0, 700)
+        }));
 
-  const prompt = `
-You are an expert curriculum designer and educator.
-The user wants to convert a YouTube video (ID: ${videoId}, URL: ${url}) into a structured, multi-day masterclass course.
-Target Level: ${level}
-Daily Study Time: ${dailyCommitmentMinutes} minutes
+        const prompt = `
+You are an expert technical instructor designing a Udemy-style curriculum section.
+Course Title: ${course.title}
+Level: ${course.level}
+Current Section: ${mod.title}
 
-Generate a comprehensive, structured course in valid JSON format matching this TypeScript schema:
+Lectures in this section:
+${JSON.stringify(lessonSummaries, null, 2)}
+
+For this section, return ONLY raw JSON matching this schema:
 {
-  "title": string,
-  "description": string,
-  "author": string,
-  "modules": [
+  "sectionTitle": "Section X: Concise Udemy-style Section Title",
+  "lessons": [
     {
-      "id": string,
-      "title": string,
-      "description": string,
-      "lessons": [
+      "id": "exact lesson id from input",
+      "title": "Clean, professional Udemy lecture title",
+      "description": "1-2 sentence overview",
+      "keyTakeaways": ["takeaway 1", "takeaway 2", "takeaway 3"],
+      "notes": "Markdown study notes with headings and code/conceptual examples",
+      "quizzes": [
         {
-          "id": string,
-          "title": string,
-          "description": string,
-          "startSeconds": number,
-          "endSeconds": number,
-          "keyTakeaways": string[],
-          "notes": string (in Markdown format with headings, explanations, and code examples if technical),
-          "quizzes": [
-            {
-              "id": string,
-              "question": string,
-              "options": string[] (array of 4 distinct choices),
-              "correctIndex": number (0-3),
-              "explanation": string,
-              "replayTimestamp": number (exact second in video where the concept was taught)
-            }
-          ]
+          "question": "Specific technical comprehension question based on the lecture",
+          "options": ["Option A", "Option B", "Option C", "Option D"],
+          "correctIndex": 0,
+          "explanation": "Clear explanation referencing the concept",
+          "replayTimestamp": number (must be between lesson's startSeconds and endSeconds)
         }
       ]
-    }
-  ],
-  "placementTest": [
-    {
-      "id": string,
-      "question": string,
-      "options": string[] (4 choices),
-      "correctIndex": number,
-      "explanation": string,
-      "associatedLessonIds": string[] (lesson IDs to skip if answered correctly)
     }
   ]
 }
-
-Return ONLY the raw JSON object, without backticks or markdown fences.
 `;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.3
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                responseMimeType: "application/json",
+                temperature: 0.3
+              }
+            })
+          }
+        );
+
+        if (!resp.ok) return mod;
+        const data = await resp.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) return mod;
+
+        const parsed = JSON.parse(text);
+        const enrichedLessons = mod.lessons.map((orig) => {
+          const match = parsed.lessons?.find((x: any) => x.id === orig.id);
+          if (!match) return orig;
+          return {
+            ...orig,
+            title: match.title || orig.title,
+            description: match.description || orig.description,
+            keyTakeaways: Array.isArray(match.keyTakeaways) && match.keyTakeaways.length > 0
+              ? match.keyTakeaways
+              : orig.keyTakeaways,
+            notes: match.notes || orig.notes,
+            quizzes:
+              Array.isArray(match.quizzes) && match.quizzes.length > 0
+                ? match.quizzes.map((q: any, qIdx: number) => ({
+                    id: `${orig.id}-q-${qIdx + 1}`,
+                    question: q.question,
+                    options: q.options,
+                    correctIndex: typeof q.correctIndex === "number" ? q.correctIndex : 0,
+                    explanation: q.explanation || "",
+                    replayTimestamp:
+                      typeof q.replayTimestamp === "number" &&
+                      q.replayTimestamp >= orig.startSeconds &&
+                      q.replayTimestamp <= orig.endSeconds
+                        ? Math.floor(q.replayTimestamp)
+                        : Math.floor(orig.startSeconds + orig.durationSeconds * 0.4)
+                  }))
+                : orig.quizzes
+          };
+        });
+
+        return {
+          ...mod,
+          title: parsed.sectionTitle || mod.title,
+          lessons: enrichedLessons
+        };
+      } catch {
+        return mod;
       }
     })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Gemini API HTTP Error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("No response content from Gemini API");
-
-  const parsed = JSON.parse(text);
-
-  // Compute total duration and schedule
-  return assembleFullCourse({
-    ...parsed,
-    videoId,
-    url,
-    dailyCommitmentMinutes,
-    level
-  });
-}
-
-function generateIntelligentFallback(params: GenerateCourseParams): Course {
-  const { videoId, url, dailyCommitmentMinutes, level } = params;
-
-  // Derive sensible course topics from video ID or URL
-  const courseTitle = params.title || "Custom Masterclass: Intensive Practical Course";
-  const defaultTotalSeconds = 5400; // 90 mins by default
-  const lessonDuration = Math.max(600, dailyCommitmentMinutes * 30); // ~10-25 mins per lesson
-  const totalLessonsCount = Math.max(3, Math.min(6, Math.floor(defaultTotalSeconds / lessonDuration)));
-
-  const lessons: Lesson[] = [];
-  const placementQuestions: PlacementQuestion[] = [];
-
-  const topics = [
-    { title: "Core Concepts & Architecture Overview", tag: "fundamentals" },
-    { title: "Essential Principles & Practical Setup", tag: "setup" },
-    { title: "Deep Dive: Implementation & Hands-on Patterns", tag: "deep-dive" },
-    { title: "Debugging, Performance & Common Pitfalls", tag: "troubleshooting" },
-    { title: "Advanced Techniques & Real-World Projects", tag: "advanced" }
-  ];
-
-  let currentStart = 0;
-  for (let i = 0; i < totalLessonsCount; i++) {
-    const topic = topics[i % topics.length];
-    const duration = Math.min(lessonDuration, defaultTotalSeconds - currentStart);
-    const end = currentStart + duration;
-    const lessonId = `lesson-${i + 1}`;
-
-    const replayTime = Math.floor(currentStart + duration * 0.35);
-
-    lessons.push({
-      id: lessonId,
-      title: `Lesson ${i + 1}: ${topic.title}`,
-      description: `Comprehensive walk-through of ${topic.title.toLowerCase()} with actionable takeaways and practical application.`,
-      durationSeconds: duration,
-      startSeconds: currentStart,
-      endSeconds: end,
-      videoId,
-      keyTakeaways: [
-        `Understand the mental model of ${topic.title.toLowerCase()}.`,
-        `Apply best practices to minimize latency, bugs, and technical debt.`,
-        `Key checkpoint covered at timestamp ${formatSecondsToTime(replayTime)}.`
-      ],
-      notes: `### ${topic.title}
-
-#### Conceptual Overview
-In this session, we analyze the core mechanisms underlying this domain. Key principles are introduced with step-by-step methodology to ensure long-term mastery.
-
-\`\`\`typescript
-// Architectural Pattern Overview
-interface CourseStep {
-  step: number;
-  title: string;
-  timestamp: string;
-  verified: boolean;
-}
-
-const currentLesson: CourseStep = {
-  step: ${i + 1},
-  title: "${topic.title}",
-  timestamp: "${formatSecondsToTime(replayTime)}",
-  verified: true
-};
-\`\`\`
-
-#### Key Takeaways
-1. Always establish clean boundaries between components and state.
-2. Verify intermediate results before scaling complexity.
-3. Review the video timestamp at **${formatSecondsToTime(replayTime)}** for in-depth visual demonstration.`,
-      quizzes: [
-        {
-          id: `q-${i + 1}-1`,
-          question: `What is the primary principle emphasized in ${topic.title}?`,
-          options: [
-            "Building clear mental models and validating intermediate assumptions before proceeding",
-            "Skipping architectural planning and writing ad-hoc implementations",
-            "Ignoring error logging and monitoring",
-            "Hardcoding credentials directly into source control"
-          ],
-          correctIndex: 0,
-          explanation: `In ${topic.title}, establishing clear architectural boundaries and verifying assumptions prevents complex downstream issues.`,
-          replayTimestamp: replayTime
-        },
-        {
-          id: `q-${i + 1}-2`,
-          question: `Which approach ensures optimal efficiency according to the video demonstration?`,
-          options: [
-            "Continuous profiling, caching validated inputs, and structuring code into modular blocks",
-            "Re-computing expensive queries on every single tick",
-            "Discarding error states silently",
-            "Avoiding all type checking and tests"
-          ],
-          correctIndex: 0,
-          explanation: `Modular architecture and caching validated results ensure maximum performance and maintainability.`,
-          replayTimestamp: Math.min(end - 30, replayTime + 180)
-        }
-      ]
-    });
-
-    if (i % 2 === 0) {
-      placementQuestions.push({
-        id: `pt-${i + 1}`,
-        question: `Diagnostic: How comfortable are you with ${topic.title}?`,
-        options: [
-          `I fully understand the concepts and have applied them in real projects`,
-          `I have a basic theoretical understanding but want practice`,
-          `I am completely new to this topic`,
-          `I prefer to skip this check`
-        ],
-        correctIndex: 0,
-        explanation: `Demonstrating familiarity with ${topic.title} allows skipping Lesson ${i + 1}.`,
-        associatedLessonIds: [lessonId]
-      });
-    }
-
-    currentStart = end;
-  }
-
-  const module1Lessons = lessons.slice(0, Math.ceil(lessons.length / 2));
-  const module2Lessons = lessons.slice(Math.ceil(lessons.length / 2));
-
-  const modules: Module[] = [
-    {
-      id: "mod-1",
-      title: "Module 1: Foundations & Core Concepts",
-      description: "Initial principles, foundational architecture, and prerequisite workflows.",
-      lessons: module1Lessons
-    }
-  ];
-
-  if (module2Lessons.length > 0) {
-    modules.push({
-      id: "mod-2",
-      title: "Module 2: Practical Implementation & Advanced Deep Dive",
-      description: "Real-world execution, troubleshooting strategies, and optimization.",
-      lessons: module2Lessons
-    });
-  }
-
-  return assembleFullCourse({
-    title: courseTitle,
-    description: `A customized, bite-sized learning course generated from video ID ${videoId}. Features interactive quizzes, synchronized notes, and day-by-day scheduling.`,
-    author: "Course Masterclass AI",
-    modules,
-    placementTest: placementQuestions,
-    videoId,
-    url,
-    dailyCommitmentMinutes,
-    level
-  });
-}
-
-function assembleFullCourse(data: any): Course {
-  const modules: Module[] = data.modules || [];
-  let totalDuration = 0;
-  const allLessons: Lesson[] = [];
-
-  modules.forEach((mod) => {
-    mod.lessons.forEach((l) => {
-      totalDuration += (l.endSeconds - l.startSeconds) || l.durationSeconds || 900;
-      allLessons.push(l);
-    });
-  });
-
-  const dailyMinutes = data.dailyCommitmentMinutes || 45;
-  const dailySeconds = dailyMinutes * 60;
-  const schedule: DailySchedule[] = [];
-
-  let currentDay = 1;
-  let currentDayLessons: string[] = [];
-  let currentDaySeconds = 0;
-
-  for (const lesson of allLessons) {
-    const dur = lesson.durationSeconds || (lesson.endSeconds - lesson.startSeconds) || 900;
-    if (currentDayLessons.length > 0 && currentDaySeconds + dur > dailySeconds * 1.3) {
-      schedule.push({
-        dayNumber: currentDay,
-        dateLabel: `Day ${currentDay}`,
-        estimatedMinutes: Math.round(currentDaySeconds / 60),
-        lessonIds: currentDayLessons
-      });
-      currentDay++;
-      currentDayLessons = [lesson.id];
-      currentDaySeconds = dur;
-    } else {
-      currentDayLessons.push(lesson.id);
-      currentDaySeconds += dur;
-    }
-  }
-
-  if (currentDayLessons.length > 0) {
-    schedule.push({
-      dayNumber: currentDay,
-      dateLabel: `Day ${currentDay}`,
-      estimatedMinutes: Math.round(currentDaySeconds / 60),
-      lessonIds: currentDayLessons
-    });
-  }
+  );
 
   return {
-    id: `course-${Date.now()}`,
-    title: data.title || "Custom Structured Course",
-    description: data.description || "Interactive structured course generated from YouTube.",
-    thumbnail: `https://img.youtube.com/vi/${data.videoId}/maxresdefault.jpg`,
-    author: data.author || "YouTube Creator",
-    sourceUrl: data.url,
-    originalVideoId: data.videoId,
-    totalDurationSeconds: totalDuration,
-    dailyCommitmentMinutes: dailyMinutes,
-    level: data.level || "Beginner",
-    modules,
-    schedule,
-    placementTest: data.placementTest || [],
-    createdAt: new Date().toISOString()
+    ...course,
+    modules: enrichedModules
   };
 }
