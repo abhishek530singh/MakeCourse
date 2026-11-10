@@ -27,7 +27,7 @@ import {
   PlayCircle,
   Video
 } from "lucide-react";
-import { Course, Lesson, PersonalNote } from "@/lib/types";
+import { Course, Lesson, PersonalNote, TranscriptCue } from "@/lib/types";
 import { DEMO_COURSES } from "@/lib/demoCourses";
 import { formatDurationHuman, formatSecondsToTime } from "@/lib/youtube";
 import { CoursePlayer } from "@/components/CoursePlayer";
@@ -62,6 +62,8 @@ export default function CourseStudyRoomPage({
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isPlacementOpen, setIsPlacementOpen] = useState(false);
   const [isCertificateOpen, setIsCertificateOpen] = useState(false);
+  const [lazyCues, setLazyCues] = useState<Record<string, TranscriptCue[]>>({});
+  const [isLoadingTranscript, setIsLoadingTranscript] = useState(false);
 
   const playerRef = useRef<{ seekTo: (seconds: number) => void } | null>(null);
 
@@ -214,6 +216,40 @@ export default function CourseStudyRoomPage({
       ? allLessons[currentIndex + 1]
       : null;
 
+  // Lazy-fetch transcript cues for playlist lectures or compactly cached courses
+  useEffect(() => {
+    if (!currentLesson || activeTab !== "transcript") return;
+    const existing = currentLesson.transcriptCues;
+    if ((existing && existing.length > 0) || lazyCues[currentLesson.id] !== undefined) return;
+
+    let cancelled = false;
+    setIsLoadingTranscript(true);
+    fetch(
+      `/api/transcript?videoId=${encodeURIComponent(currentLesson.videoId)}&start=${currentLesson.startSeconds}&end=${currentLesson.endSeconds}`
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) {
+          setLazyCues((prev) => ({
+            ...prev,
+            [currentLesson.id]: Array.isArray(data.cues) ? data.cues : []
+          }));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLazyCues((prev) => ({ ...prev, [currentLesson.id]: [] }));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingTranscript(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, currentLesson, lazyCues]);
+
   if (notFound) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">
@@ -246,7 +282,10 @@ export default function CourseStudyRoomPage({
   const totalLessonsCount = allLessons.length;
   const completedCount = completedLessonIds.length + skippedLessonIds.length;
   const currentLessonNotes = personalNotes.filter((n) => n.lessonId === currentLesson.id);
-  const currentCues = currentLesson.transcriptCues || [];
+  const currentCues =
+    (currentLesson.transcriptCues && currentLesson.transcriptCues.length > 0
+      ? currentLesson.transcriptCues
+      : lazyCues[currentLesson.id]) || [];
   const filteredCues = transcriptQuery.trim()
     ? currentCues.filter((c) =>
         c.text.toLowerCase().includes(transcriptQuery.trim().toLowerCase())
@@ -453,14 +492,14 @@ export default function CourseStudyRoomPage({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-zinc-400" />
+                    <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 focus-within:border-brand-500 dark:border-zinc-800 dark:bg-zinc-950">
+                      <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
                       <input
                         type="text"
                         value={curriculumSearch}
                         onChange={(e) => setCurriculumSearch(e.target.value)}
                         placeholder="Filter curriculum..."
-                        className="rounded-lg border border-zinc-200 bg-zinc-50 py-1.5 pl-8 pr-3 text-xs text-zinc-900 outline-none focus:border-brand-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-white"
+                        className="w-40 bg-transparent py-1.5 text-xs text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-white sm:w-48"
                       />
                     </div>
                     <button
@@ -709,19 +748,24 @@ export default function CourseStudyRoomPage({
                       Click any timestamp to jump the video player directly to that moment.
                     </p>
                   </div>
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-zinc-400" />
+                  <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 focus-within:border-brand-500 dark:border-zinc-800 dark:bg-zinc-950">
+                    <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
                     <input
                       type="text"
                       value={transcriptQuery}
                       onChange={(e) => setTranscriptQuery(e.target.value)}
                       placeholder="Search transcript..."
-                      className="rounded-lg border border-zinc-200 bg-zinc-50 py-1.5 pl-8 pr-3 text-xs text-zinc-900 outline-none focus:border-brand-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-white"
+                      className="w-40 bg-transparent py-1.5 text-xs text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-white sm:w-48"
                     />
                   </div>
                 </div>
 
-                {filteredCues.length > 0 ? (
+                {isLoadingTranscript ? (
+                  <div className="flex items-center justify-center gap-2 py-8 text-xs text-zinc-500">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+                    <span>Fetching lecture transcript...</span>
+                  </div>
+                ) : filteredCues.length > 0 ? (
                   <div className="max-h-[460px] space-y-1.5 overflow-y-auto pr-1">
                     {filteredCues.map((cue, idx) => {
                       const isActiveCue =

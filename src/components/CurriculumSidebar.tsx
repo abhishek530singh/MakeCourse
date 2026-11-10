@@ -172,14 +172,14 @@ export function CurriculumSidebar({
         {/* Lecture Search & Expand/Collapse All */}
         {viewMode === "sections" && (
           <div className="mt-2.5 flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-zinc-400" />
+            <div className="flex flex-1 items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/70 px-2.5 focus-within:border-brand-500 dark:border-zinc-800 dark:bg-zinc-950">
+              <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search lectures..."
-                className="w-full rounded-lg border border-zinc-200 bg-zinc-50/70 py-1.5 pl-8 pr-2.5 text-xs text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-brand-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+                className="w-full bg-transparent py-1.5 text-xs text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
               />
             </div>
             <button

@@ -16,7 +16,8 @@ import {
   Key,
   Flame,
   History,
-  Trash2
+  Trash2,
+  ChevronDown
 } from "lucide-react";
 import { DEMO_COURSES } from "@/lib/demoCourses";
 import { Course } from "@/lib/types";
@@ -160,16 +161,14 @@ export default function HomePage() {
               <label className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
                 YouTube Video or Playlist URL
               </label>
-              <div className="relative mt-2">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-red-500">
-                  <Youtube className="h-5 w-5" />
-                </div>
+              <div className="mt-2 flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50/50 px-3.5 transition-all focus-within:border-brand-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950/60 dark:focus-within:border-brand-400 dark:focus-within:bg-zinc-950">
+                <Youtube className="h-5 w-5 shrink-0 text-red-500" />
                 <input
                   type="text"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="e.g. https://www.youtube.com/watch?v=KN58GwRRu28 or playlist URL"
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 py-3.5 pl-11 pr-4 text-sm text-zinc-900 outline-none transition-all placeholder:text-zinc-400 focus:border-brand-500 focus:bg-white focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-white dark:focus:border-brand-400 dark:focus:bg-zinc-950"
+                  className="w-full bg-transparent py-3.5 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-white"
                 />
               </div>
             </div>
@@ -180,14 +179,12 @@ export default function HomePage() {
                 <label className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
                   Daily Study Time
                 </label>
-                <div className="relative mt-2">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-zinc-400">
-                    <Clock className="h-4 w-4" />
-                  </div>
+                <div className="mt-2 flex items-center gap-2.5 rounded-xl border border-zinc-200 bg-zinc-50/50 px-3.5 transition-all focus-within:border-brand-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950/60 dark:focus-within:border-brand-400 dark:focus-within:bg-zinc-950">
+                  <Clock className="h-4 w-4 shrink-0 text-zinc-400" />
                   <select
                     value={dailyMinutes}
                     onChange={(e) => setDailyMinutes(Number(e.target.value))}
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 py-2.5 pl-10 pr-4 text-xs font-medium text-zinc-900 outline-none transition-all focus:border-brand-500 focus:bg-white focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-white"
+                    className="w-full cursor-pointer appearance-none bg-transparent py-2.5 text-xs font-medium text-zinc-900 outline-none dark:text-white"
                   >
                     <option value={15}>15 Minutes / Day (Micro-learning)</option>
                     <option value={30}>30 Minutes / Day (Casual Pace)</option>
@@ -195,6 +192,7 @@ export default function HomePage() {
                     <option value={60}>60 Minutes / Day (Intensive)</option>
                     <option value={90}>90 Minutes / Day (Sprint Bootcamp)</option>
                   </select>
+                  <ChevronDown className="pointer-events-none h-4 w-4 shrink-0 text-zinc-400" />
                 </div>
               </div>
 
@@ -202,19 +200,18 @@ export default function HomePage() {
                 <label className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
                   Target Proficiency
                 </label>
-                <div className="relative mt-2">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-zinc-400">
-                    <GraduationCap className="h-4 w-4" />
-                  </div>
+                <div className="mt-2 flex items-center gap-2.5 rounded-xl border border-zinc-200 bg-zinc-50/50 px-3.5 transition-all focus-within:border-brand-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950/60 dark:focus-within:border-brand-400 dark:focus-within:bg-zinc-950">
+                  <GraduationCap className="h-4 w-4 shrink-0 text-zinc-400" />
                   <select
                     value={level}
                     onChange={(e) => setLevel(e.target.value as any)}
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 py-2.5 pl-10 pr-4 text-xs font-medium text-zinc-900 outline-none transition-all focus:border-brand-500 focus:bg-white focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-white"
+                    className="w-full cursor-pointer appearance-none bg-transparent py-2.5 text-xs font-medium text-zinc-900 outline-none dark:text-white"
                   >
                     <option value="Beginner">Beginner (Foundations first)</option>
                     <option value="Intermediate">Intermediate (Core mechanics)</option>
                     <option value="Advanced">Advanced (Deep dive & architecture)</option>
                   </select>
+                  <ChevronDown className="pointer-events-none h-4 w-4 shrink-0 text-zinc-400" />
                 </div>
               </div>
             </div>
